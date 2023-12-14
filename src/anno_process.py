@@ -19,8 +19,6 @@ def json2mask(
     >>>     os.makedirs(save_dir, exist_ok=True)
     >>>     masks will be saved
     >>>     None will be returned
-    >>> elif len(json_list) > 10:
-    >>>     raise ValueError
     >>> else:
     >>>     masks will be returned
 
@@ -45,10 +43,6 @@ def json2mask(
                 save_dir, os.path.splitext(json_path.split("/")[-1])[0] + ".png"
             )
             _gen_otsu_mask(json_path, downsample, color_list, mask_size, save_path)
-    elif len(json_list) > 10:
-        raise ValueError(
-            "The length of json_list more than 10, save_dir must be specified."
-        )
     else:
         mask_list = []
         for json_path in json_list:
