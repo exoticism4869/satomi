@@ -27,7 +27,7 @@ def crop_patch(
 
     Parameters:
     ----------------------------------------------------------------
-        wsi_path_list (List[str]): List of whole slide image paths.
+        wsi_path_list (List[str]): List of wsi paths.
         mask_dir (str): Directory of masks.
         save_dir (str): Directory to save patches.
         patch_size (int): Patch size on the desired level.
@@ -66,24 +66,14 @@ def crop_patch(
     pool.join()
 
 
-def _crop_patch(params):
-    (
-        wsi_path,
-        mask_path,
-        save_dir,
-        patch_size,
-        crop_downsample,
-        mask_downsample,
-        stride,
-        threshold,
-    ) = params
-    os.makedirs(save_dir, exist_ok=True)
+def _gen_topleft_points(
+    mask_path, patch_size, crop_downsample, mask_downsample, stride, threshold
+):
     patch_size_level0 = patch_size * crop_downsample
     mask_patch_size = patch_size_level0 // mask_downsample
     stride = stride * crop_downsample // mask_downsample
     mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
     mask_height, mask_width = mask.shape
-
     topleft = []  # 计算有效patch在level0的左上角坐标
     for i in range(0, mask_height, stride):
         for j in range(0, mask_width, stride):
@@ -100,13 +90,31 @@ def _crop_patch(params):
                     - patch_size * crop_downsample / 2
                 )
                 topleft.append((topleft_i, topleft_j))
+    return topleft
 
+
+def _crop_patch(params):
+    (
+        wsi_path,
+        mask_path,
+        save_dir,
+        patch_size,
+        crop_downsample,
+        mask_downsample,
+        stride,
+        threshold,
+    ) = params
+    os.makedirs(save_dir, exist_ok=True)
+    patch_size_level0 = patch_size * crop_downsample
+    topleft = _gen_topleft_points(
+        mask_path, patch_size, crop_downsample, mask_downsample, stride, threshold
+    )
     wsi_id, extension = os.path.splitext(wsi_path.split("/")[-1])
     if extension == ".kfb":
         slide = KfbSlide(wsi_path)
     else:
         slide = OpenSlide(wsi_path)
-    for topleft_i, topleft_j in topleft:
+    for topleft_i, topleft_j in tqdm(topleft, leave=False):
         patch = slide.read_region(
             (topleft_j, topleft_i), 0, (patch_size_level0, patch_size_level0)
         )
@@ -115,6 +123,90 @@ def _crop_patch(params):
             save_dir, wsi_id + "_" + str(topleft_i) + "_" + str(topleft_j) + ".png"
         )
         patch.save(save_path)
+
+
+def crop_vis(
+    thumb_path_list,
+    wsi_path_list,
+    mask_dir,
+    save_dir,
+    patch_size,
+    crop_downsample,
+    mask_downsample,
+    stride,
+    threshold,
+):
+    """Visualize crop region on thumbnail
+
+    Either wsi_path_list or thumb_path_list must be provided.
+
+    Parameters:
+    ----------------------------------------------------------------
+        thumb_path_list(List[str]): List of thumbnail paths.
+        wsi_path_list (List[str]): List of wsi paths.
+        mask_dir (str): Directory of masks.
+        save_dir (str): Directory to save visualized thumbnails.
+        patch_size (int): Patch size on the desired level.
+        crop_downsample (int): Downsample factor for cropping, 1=level0, 2=level1.
+        mask_downsample (int): Downsample factor for masks.
+        stride (int): Distance that shift patch moves, the number is relative to patch_size. e.g.(patch_size=256, stride=224)
+        threshold (float): Accept patch if the proportion of white area in the patch bigger than threshold.
+
+    Returns:
+    ----------------------------------------------------------------
+        None
+    """
+    mask_patch_size = patch_size * crop_downsample // mask_downsample
+    if len(thumb_path_list) != 0:
+        for thumb_path in thumb_path_list:
+            wsi_id = os.path.splitext(thumb_path.split("/")[-1])[0]
+            mask_path = os.path.join(mask_dir, wsi_id + ".png")
+            save_path = os.path.join(save_dir, wsi_id + ".png")
+            topleft = _gen_topleft_points(
+                mask_path,
+                patch_size,
+                crop_downsample,
+                mask_downsample,
+                stride,
+                threshold,
+            )
+            thumb = cv2.imread(thumb_path)
+            for topleft_i, topleft_j in topleft:
+                cv2.rectangle(
+                    thumb,
+                    (topleft_j, topleft_i),
+                    (topleft_j + mask_patch_size, topleft_i + mask_patch_size),
+                    (0, 0, 255),
+                    thickness=2,
+                )
+            cv2.imwrite(save_path, thumb)
+    elif len(wsi_path_list) != 0:
+        for wsi_path in wsi_path_list:
+            wsi_id = os.path.splitext(wsi_path.split("/")[-1])[0]
+            mask_path = os.path.join(mask_dir, wsi_id + ".png")
+            save_path = os.path.join(save_dir, wsi_id + ".png")
+            topleft = _gen_topleft_points(
+                mask_path,
+                patch_size,
+                crop_downsample,
+                mask_downsample,
+                stride,
+                threshold,
+            )
+            thumb = wsi2thumb([wsi_path], save_dir="", downsample=mask_downsample)
+            thumb = np.array(thumb)
+            thumb = cv2.cvtColor(thumb, cv2.COLOR_RGB2BGR)
+            for topleft_i, topleft_j in topleft:
+                cv2.rectangle(
+                    thumb,
+                    (topleft_j, topleft_i),
+                    (topleft_j + mask_patch_size, topleft_i + mask_patch_size),
+                    (0, 0, 255),
+                    thickness=2,
+                )
+            cv2.imwrite(save_path, thumb)
+    else:
+        raise ValueError("Either wsi_path_list or thumb_path_list must be provided.")
 
 
 if __name__ == "__main__":
